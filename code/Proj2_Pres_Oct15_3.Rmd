@@ -1,0 +1,452 @@
+---
+title: "Proj2_Presentation"
+author: "Ruofeng Tang"
+date: "2023-10-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Our group decided to use linear regression models, in order to predict body fat percentage based on several measurements. After cleaning data rows that are most likely incorrect, we will explore 2 ways to simulate the modern American male population, as opposed to 1970 American male samples from given data set. Then, we will decide on which independent measurements we need for the regression model. In the end, we will use regression coefficients and prediction interval to tell our users what is the average body fat percentage given their measurements (Abdomen circumference), and what is the 95% prediction range. 
+
+## Data Cleaning
+
+First, I cross-examined body fat percentage with density, and adiposity with height/weight. Based on given formulas, these measurements should align relatively well.
+
+```{r}
+# Need 'BodyFat.csv' in the same folder
+df = read.csv('BodyFat.csv')
+
+# from density and bodyfat relationship
+diff1 = 495/df$DENSITY - 450 - df$BODYFAT
+
+plot(diff1,xlab="ID",ylab="Measurement Error")
+```
+
+Judging from plot, set the error threshold to be |3| and |5|.
+
+```{r}
+# index 48, 96 maybe change
+df[abs(diff1) > 5,]
+
+# index 76,182 maybe change
+df[abs(diff1) > 3,]
+
+```
+
+Examine each row separately:
+
+```{r}
+df[48,] # cannot decide
+df[96,] # bmi indicates overweight, but body fat normal, circumferences normal. Not enough evidence to delete it.
+df[76,] # all normal, cannot decide
+df[182,] # body fat 0, try recover with density
+temp = 495/df[182,3] - 450 # negative value -3.6, cannot use, should delete.
+```
+
+In conclusion, Index 182 had body fat 0, and applying the formula cannot recover it. So it should be deleted later. Next, try the BMI, height and weight formula:
+
+```{r}
+# from BMI, height and weight
+diff2 = 703 * df$WEIGHT / (df$HEIGHT^2) - df$ADIPOSITY
+plot(diff2,xlab='ID',ylab='Measurement Error')
+
+# notice a significant outlier. Index 42 must be changed
+df[abs(diff2) > 100,]
+
+# observe that the height 29.5 is abnormal. Try recover it with weight and adiposity.
+df[42,'HEIGHT'] = sqrt(df[42,'WEIGHT'] * 703 / df[42,'ADIPOSITY'])
+df[42,'HEIGHT']
+
+diff2_1 = 703 * df$WEIGHT / (df$HEIGHT^2) - df$ADIPOSITY
+
+plot(diff2_1)
+```
+
+From the plot, set the error threshold |2|:
+
+```{r}
+# index 162, 220 maybe change, but no obvious anomaly.
+df[abs(diff2_1) > 2,]
+```
+
+From both formulas, we determined abnormal values with index 182 and 42. Abnormal height of index 42 was changed, but the formula did not provide a reasonable alternative for abnormal body fat percentage of index 182. So, index 182 should be deleted.
+
+Next, try to check anomalies in individual columns:
+
+```{r}
+# index 172 has bodyfat 1.9, abnormal
+df[df$BODYFAT==min(df$BODYFAT),]
+
+# Index 216 has bodyfat 45.1, much larger than other entries
+df[df$BODYFAT==max(df$BODYFAT),]
+
+# Index 39 has weight 363.15, much larger than other entries
+df[df$WEIGHT==max(df$WEIGHT),]
+```
+
+Index 172 did not show up when detecting anomaly with body fat/density formula, suggesting that the density aligns with the abnormal body fat percentage. Therefore, it should be deleted; Index 216 and index 39 both have parameters higher than any other entries, and we considered these entries not helpful to a predictive model. They should be deleted.
+
+```{r}
+df = df[-216,]
+df = df[-182,]
+df = df[-172,]
+df = df[-39,]
+```
+
+## Distribution Matching (1970 distribution to Now)
+
+The data set is from 1970s, decades ago. To accurately predict body fat percentage today, we want to somehow manipulate the age distribution to imitate modern American society.
+
+For our modern age distribution data, we used [Resident population of the United States by sex and age as of July 1, 2022(in millions)](https://www.statista.com/statistics/241488/population-of-the-us-by-sex-and-age/)
+
+This data set gave us the population of US males by 5-year age group (0-4, 5-9, ......, 80-84,85+).
+
+We came up with 2 methods:
+
+### a.Linear Regression with bootstrapping (restricted)
+The first method was bootstrapping, but a restricted version. Ideally, we wanted to repeatedly sample the 1970 data set until we found a smaller data set with 2022 age distribution, similar percentages for each age group. In this way, we could simulate a 2022 data set. But it was too costly in computation (We could not find a sample with size 20, half the number of age groups, 1 million attempts)
+
+So, we tried to bootstrap each age group separately. To bootstrap each age group, we want the 1970 data set to have enough samples to reach the 2022 age distribution's percentage.
+
+```{r}
+# Each entry corresponds to age group 0-4, 5-9, ......, 80-84,85+
+samples1970 = c(0,0,0,0,10,26,17,21,60,32,25,21,15,12,8,0,1,0)
+populations2022 = c(9.48, 10.23, 10.7, 11.08, 11.6, 11.35, 11.84, 11.3, 10.82, 9.84, 10.43, 10.37, 10.3, 8.97, 7.04, 4.91, 2.83, 2.28)
+
+populations2022
+
+# notice that in the first and last several age groups, there are no samples or only 1 sample
+samples1970
+```
+
+Due to the lack of 1970 samples from age groups 0-19, 75+, we decided to ignore those age groups and focus on age groups in 20-74:
+
+```{r}
+df[df$AGE>74,]
+
+# remove the sample at age 81
+df[78,]
+df = df[-78,]
+
+# new samples and populations by age group
+pop1970 = c(10,26,17,21,60,32,25,21,15,12,8)
+pop2022 = c(11.6, 11.35, 11.84, 11.3, 10.82, 9.84, 10.43, 10.37, 10.3, 8.97, 7.04)
+
+# the 1970 and 2022 age distributions
+dist1970 = pop1970 / sum(pop1970)
+dist2022 = pop2022 / sum(pop2022)
+
+dist1970
+dist2022
+```
+
+We hoped to get a new data set that follows the 2022 age distribution out of the 1970 data set. For 1970 age groups with percentages higher than 2022 distribution, we want to select fewer samples; for age groups with lower percentages, we want to select more samples. At the same time, we want to pick the maximum sample size such that we can pick enough people to satisfy 2022 percentage for each age group.
+
+```{r}
+size = length(df[,1])
+cond = -1
+while (min(cond) < 0) {
+  cond = pop1970 - dist2022*size
+  size = size - 1
+}
+
+# sample size
+size
+
+# how many samples from each age group in order to simulate 2022 age distribution
+dist2022*size
+```
+
+So, we need to pick 10,10,10,9,9,8,9,9,9,8,6 people from respective age groups. This smaller data set will simulate 2022 age distribution.
+
+```{r}
+set.seed(123)
+
+# separate 1970 data set by age groups
+df_mod = df
+df24 = df_mod[df_mod$AGE<=24,]
+df29 = df_mod[df_mod$AGE>24&df_mod$AGE<=29,]
+df34 = df_mod[df_mod$AGE>29&df_mod$AGE<=34,]
+df39 = df_mod[df_mod$AGE>34&df_mod$AGE<=39,]
+df44 = df_mod[df_mod$AGE>39&df_mod$AGE<=44,]
+df49 = df_mod[df_mod$AGE>44&df_mod$AGE<=49,]
+df54 = df_mod[df_mod$AGE>49&df_mod$AGE<=54,]
+df59 = df_mod[df_mod$AGE>54&df_mod$AGE<=59,]
+df64 = df_mod[df_mod$AGE>59&df_mod$AGE<=64,]
+df69 = df_mod[df_mod$AGE>64&df_mod$AGE<=69,]
+df74 = df_mod[df_mod$AGE>69&df_mod$AGE<=74,]
+
+# random selection process. Note that age group 24- has only 10 samples, no need to randomly select.
+rd29 <- sample(1:length(df29[,1]), 10, replace = FALSE)
+rd34 <- sample(1:length(df34[,1]), 10, replace = FALSE)
+rd39 <- sample(1:length(df39[,1]), 9, replace = FALSE)
+rd44 <- sample(1:length(df44[,1]), 9, replace = FALSE)
+rd49 <- sample(1:length(df49[,1]), 8, replace = FALSE)
+rd54 <- sample(1:length(df54[,1]), 9, replace = FALSE)
+rd59 <- sample(1:length(df59[,1]), 9, replace = FALSE)
+rd64 <- sample(1:length(df64[,1]), 9, replace = FALSE)
+rd69 <- sample(1:length(df69[,1]), 8, replace = FALSE)
+rd74 <- sample(1:length(df74[,1]), 6, replace = FALSE)
+
+# new data set
+df_sample = rbind(df24,df29[rd29,],df34[rd34,],df39[rd39,],df44[rd44,],df49[rd49,],df54[rd54,],df59[rd59,],df64[rd64,],df69[rd69,],df74[rd74,])
+head(df_sample)
+```
+
+Although this new data set had 2022 age distribution, there was information loss because of the random selection process and the reduced sample size. To mitigate that, we sampled 4 more times and combined them to a larger data set. It risked repeating several data entries, but it was more beneficial by preventing information loss.
+
+```{r}
+# new data set above
+df_sample_comb = df_sample
+
+for (i in 1:4){
+  rd29 <- sample(1:length(df29[,1]), 10, replace = FALSE)
+  rd34 <- sample(1:length(df34[,1]), 10, replace = FALSE)
+  rd39 <- sample(1:length(df39[,1]), 9, replace = FALSE)
+  rd44 <- sample(1:length(df44[,1]), 9, replace = FALSE)
+  rd49 <- sample(1:length(df49[,1]), 8, replace = FALSE)
+  rd54 <- sample(1:length(df54[,1]), 9, replace = FALSE)
+  rd59 <- sample(1:length(df59[,1]), 9, replace = FALSE)
+  rd64 <- sample(1:length(df64[,1]), 9, replace = FALSE)
+  rd69 <- sample(1:length(df69[,1]), 8, replace = FALSE)
+  rd74 <- sample(1:length(df74[,1]), 6, replace = FALSE)
+  df_temp = rbind(df24,df29[rd29,],df34[rd34,],df39[rd39,],
+                  df44[rd44,],df49[rd49,],df54[rd54,],df59[rd59,],
+                  df64[rd64,],df69[rd69,],df74[rd74,])
+  df_sample_comb = rbind(df_sample_comb,df_temp)
+}
+```
+
+For our linear regression model, we first checked one simulated data set with size 97, and then checked 5 sets combined with size 485.
+
+```{r}
+# remove index
+df_sample = df_sample[,-1]
+
+# remove density, effectively same as body fat
+df_sample = df_sample[,-2]
+
+# all parameters
+model1 = lm(BODYFAT~.,data=df_sample)
+summary(model1)  #0.79
+
+# from previous model information, try abdomen only
+model4 = lm(BODYFAT~ABDOMEN, data=df_sample)
+summary(model4)  #0.72
+
+plot(df_sample$ABDOMEN,df_sample$BODYFAT,xlab="Abdomen Circumference",ylab='Bodyfat Percentage',main='Regression Plot with Prediction Interval (black lines)')
+abline(model4,col='red')
+
+# create prediction interval
+xrange = seq(60,150,0.1)    # checked data range and significant digits from 1970 data set
+predicts_ab = matrix(0,nrow=3,ncol=length(xrange))
+
+for (i in 1:length(xrange)){
+  predicts_ab[,i] = predict(model4,
+                            newdata=data.frame(ABDOMEN=xrange[i]),
+                            interval='prediction')
+}
+
+lines(xrange,predicts_ab[2,])
+lines(xrange,predicts_ab[3,])
+
+prediction_range = predicts_ab[3,1] - predicts_ab[2,1]
+
+# prediction range is 17.6, meaning +/- 8.8
+prediction_range
+
+res <- resid(model4)
+plot(fitted(model4), res,main='Residual Plot',xlab='Bodyfat Percentage')
+abline(0,0)
+
+qqnorm(res)
+qqline(res)
+```
+
+For one simulated data set, we first checked regression based on all parameters, then based on Abdomen circumference only. The R-squared values (0.79/0.72) did not have enough difference to guarantee the more complicated model. For the Abdomen-only model, the residual plot looks random, and the qq plot showed that residuals are normally distributed, which suggests that the regression model was a good fit. The 95% prediction interval included most data points, and the prediction range is 17.6.
+
+Next, we checked the combined data set:
+
+```{r}
+# remove index
+df_sample_comb = df_sample_comb[,-1]
+
+# remove density, effectively same as body fat
+df_sample_comb = df_sample_comb[,-2]
+
+# all parameters
+model1 = lm(BODYFAT~.,data=df_sample_comb)
+summary(model1)  #0.77
+
+# from previous model information, try abdomen only
+model4 = lm(BODYFAT~ABDOMEN, data=df_sample_comb)
+summary(model4)  #0.7
+
+plot(df_sample_comb$ABDOMEN,df_sample_comb$BODYFAT,xlab="Abdomen Circumference",ylab='Bodyfat Percentage',main='Regression Plot with Prediction Interval (black lines)')
+abline(model4,col='red')
+
+# create prediction interval
+xrange = seq(60,150,0.1)    # checked data range and significant digits from 1970 data set
+predicts_ab = matrix(0,nrow=3,ncol=length(xrange))
+
+for (i in 1:length(xrange)){
+  predicts_ab[,i] = predict(model4,
+                            newdata=data.frame(ABDOMEN=xrange[i]),
+                            interval='prediction')
+}
+
+lines(xrange,predicts_ab[2,])
+lines(xrange,predicts_ab[3,])
+
+prediction_range = predicts_ab[3,1] - predicts_ab[2,1]
+
+# prediction range is 16.3, meaning +/- 8.15
+prediction_range
+
+res <- resid(model4)
+plot(fitted(model4), res,main='Residual Plot',xlab='Bodyfat Percentage')
+abline(0,0)
+
+qqnorm(res)
+qqline(res)
+```
+
+These models' R-squared values performed better than with the smaller data set, the residual plot did not have a pattern, and the Bodyfat Percentage~Abdomen Circumference model produced a smaller prediction range 16.3. However, the QQ-plot displayed a shift on both ends, undermining the model's robustness.
+
+There are two main limitations of this model. First, it was most accurate with age group 20-74 because of the original data set's limitation. But we believed that predictions for people outside that age group would be accurate to a large extent: the regression model trained on all parameters suggested that age did not significantly influence body fat percentage.
+
+Second, the bootstrapping process counted some data entries repeatedly. For example, every sample in age group 20-24 was counted 5 times by design, since we wanted the sample size to be as large as possible. We considered this a necessary trade-off, since this method brought in much-needed randomness when simulating a new 2022 age distribution.
+
+### b.Weighted Linear Regression
+
+Our second attempt is to implement age distribution close to present by using weights in order to make our prediction model act with present much more robustly. [Age distribution of 2022 comes from [statista](https://www.statista.com/statistics/241488/population-of-the-us-by-sex-and-age/)]
+
+```{r}
+library(tidyverse)
+body.fat.ori <- read_csv("https://raw.githubusercontent.com/Star732/stat628/main/Module2/BodyFat.csv")
+### remove Index 39, 172, 182, 216
+body.fat <- body.fat.ori[c(1:38, 40:171, 173:181, 183:215, 217:dim(body.fat.ori)[1]),]
+```
+Graph below is the male age distribution in the U.S. of 2022 from official website.
+
+```{r}
+## Official age distribution of 2022
+library(ggrepel)
+age.pop.2022 <- c(9.48, 10.23, 10.7, 11.08, 11.6, 11.35, 11.84, 11.3, 10.82, 9.84, 10.43, 10.37, 10.3, 8.97, 7.04, 4.91, 2.83, 2.28)
+ages <- seq(2, 87, by = 5)
+ggplot(data.frame(age = ages, pop = age.pop.2022), aes(x = age, y = pop)) +
+  geom_text_repel(aes(label = pop), nudge_y = 0.9, segment.size = 0.2) +
+  geom_col(fill = "#9FC6FA") +
+  labs(title = "Male population of the U.S. of 2022 (In millions)",
+        x = "Age", y = "Population") +
+  theme_bw()
+```
+
+According to distribution at present, we decided to use $w_i=\frac{percentage_{i,1970}}{percentage_{i,2022}}$ where $i\in$ ages as our weight. Because we don't have data in some age intervals in our dataset, such as $[0,5],[5,10],\dots$, so we chose to ignore those intervals.
+
+```{r}
+### for each age, count how many pieces of data does this age have 
+sample.cnt <- body.fat |>
+  group_by(AGE) |>
+  summarise(count = n())
+
+used.age <- ages[c(5:(length(ages)-3), length(ages)-1)]
+### group sample age by official age intervals
+j <- 1
+i <- 1
+sample.med <- c()
+while (i <= dim(sample.cnt)[1]){
+  if ((sample.cnt$AGE[i] <= used.age[j]+2) & (sample.cnt$AGE[i] >= used.age[j]-2)){
+    sample.med[i] <- used.age[j]
+    i <- i+1
+  }else{j <- j+1}
+}
+
+df.use <- sample.cnt |>
+  left_join(data.frame(AGE = sample.cnt$AGE, age.med = sample.med))
+
+new.count <- df.use |>
+  group_by(age.med) |>
+  summarise(new.count = sum(count)) |>
+  pull(new.count)
+
+new.count ### calculate how many people at different age interval
+```
+
+```{r}
+### build a dataframe consisting of sample age and official age and then calculate weights
+compare.age <- data.frame(age.med = seq(2,87,by=5), distrib2022 = age.pop.2022, distrib1970 = c(0,0,0,0,10,26,17,21,60,32,25,21,15,12,8,0,1,0))
+
+diff.df <- compare.age |>
+  summarise(
+    age.med = age.med,
+    prob22 = distrib2022/sum(distrib2022),
+    prob70 = distrib1970/sum(distrib1970),
+    diffs = prob22 / prob70
+  )
+
+weights <- diff.df |> pull(diffs)
+### cuz we don't have some age intervals in our dataset, so we remove those intervals
+used.weight <- weights[c(5:(length(ages)-3), length(ages)-1)]
+#used.weight
+```
+
+```{r}
+weights.use <- c()
+### calculate vector of weight which will be used
+j <- 1
+i <- 1
+while(i <= dim(sample.cnt)[1]){
+  if ((sample.cnt$AGE[i] <= used.age[j]+2) & (sample.cnt$AGE[i] >= used.age[j]-2)){
+    wi <- rep(used.weight[j], sample.cnt$count[i])
+    #print(wi)
+    weights.use <-  append(weights.use, wi)
+    i <- i+1
+  }else{j <- j+1}
+}
+## model
+l2.wt <- lm(BODYFAT ~ ABDOMEN, data = body.fat, weights = weights.use)
+summary(l2.wt)  # 0.72
+```
+```{r}
+plot(body.fat$ABDOMEN, body.fat$BODYFAT, xlab="Abdomen Circumference", ylab='Bodyfat Percentage', main='Weighted Regression Plot with Prediction Interval (black lines)')
+abline(l2.wt, col='red')
+
+# create prediction interval
+xrange = seq(60,150,0.1)    # checked data range and significant digits from 1970 data set
+predicts_ab = matrix(0,nrow=3,ncol=length(xrange))
+
+for (i in 1:length(xrange)){
+  predicts_ab[,i] = suppressWarnings(
+    predict(l2.wt,newdata=data.frame(ABDOMEN=xrange[i]),
+            interval='prediction'))
+}
+
+lines(xrange,predicts_ab[2,])
+lines(xrange,predicts_ab[3,])
+
+prediction_range = predicts_ab[3,1] - predicts_ab[2,1]
+
+# prediction range is 14.5, meaning +/- 7.25
+prediction_range
+
+res <- resid(l2.wt)
+plot(fitted(l2.wt), res,main='Residual Plot',xlab='Bodyfat Percentage')
+abline(0,0)
+
+qqnorm(res)
+qqline(res)
+```
+
+This weighted regression model's R-squared value is 0.72, which was highest among our models. Besides, the residual plot did not have a pattern, qq plot showed normality, and the Bodyfat Percentage~Abdomen Circumference model produced a prediction range 14.5, the smallest range. Similar to bootstrapping models, this model was most accurate with age group 20-74.
+
+The main problem with weighted regression was that we could not check the model's performance against a 2022 age distribution. We could only check the performance against 1970 age distribution, as opposed to simulated 2022 age distribution with bootstrapping. However, the bootstrapping process was not significant enough to influence our choice between bootstrapping and weighted regression. The original 1970 data set was too small to produce multiple bootstrap data sets containing vastly different samples. In many age groups, the random selection process was not significant enough.
+
+## Conclusion
+
+In conclusion, we considered the weighted regression model (Bodyfat Percentage ~ Abdomen Circumference) to be the best model overall. It had highest R-squared value 0.72, and it produced the smallest prediction range 14.5, meaning the highest accuracy among our models. Also, the QQ-plot displayed a higher degree of normality than the bootstrapping model. Regarding user experience, the input of our model would be abdomen circumference, and the output would be average bodyfat percentage and a prediction range.
