@@ -2,7 +2,7 @@
 
 The executive summary file summarizes our findings.
 
-The project2_pre_oct14.pptx file is our presentation silde.
+The project2_pre_oct15(1).pptx file is our presentation silde.
 
 All code parts are in the code folder, and the ShinyApp folder contains Shiny code. Note that the Rmd file is a walkthrough of our codes.
 
