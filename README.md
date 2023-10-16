@@ -4,7 +4,7 @@ The executive summary file summarizes our findings.
 
 The project2_pre_oct14.pptx file is our presentation silde.
 
-All code parts are in the code folder. Note that the Rmd file is a walkthrough of our codes.
+All code parts are in the code folder, and the ShinyApp folder contains Shiny code. Note that the Rmd file is a walkthrough of our codes.
 
 All images produced are in the image folder. Again, the Rmd file in the code folder contains all images and is more readable.
 
